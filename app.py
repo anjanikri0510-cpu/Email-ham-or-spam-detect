@@ -1,11 +1,10 @@
 """
-Flask app that serves predictions from spam_pipeline.pkl
+Streamlit app that serves predictions from spam_pipeline.pkl
 (sklearn Pipeline: CountVectorizer(preprocessor=wordopt) -> RandomForestClassifier)
 
 Run:
-    pip install flask scikit-learn joblib
-    python app.py
-Then open http://localhost:5000
+    pip install streamlit scikit-learn joblib
+    streamlit run streamlit_app.py
 """
 
 import re
@@ -13,7 +12,7 @@ import string
 import sys
 
 import joblib
-from flask import Flask, render_template_string, request, jsonify
+import streamlit as st
 
 # ---------------------------------------------------------------------------
 # IMPORTANT: the pickle was saved with a custom preprocessing function called
@@ -36,46 +35,14 @@ def wordopt(text):
 sys.modules["__main__"].wordopt = wordopt
 
 MODEL_PATH = "spam_pipeline.pkl"
-pipeline = joblib.load(MODEL_PATH)
-
-app = Flask(__name__)
-
-PAGE = """
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Spam Classifier</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #222; }
-    h1 { font-size: 1.4rem; }
-    textarea { width: 100%; height: 140px; font-size: 1rem; padding: 10px; box-sizing: border-box; }
-    button { margin-top: 10px; padding: 10px 20px; font-size: 1rem; cursor: pointer; }
-    .result { margin-top: 20px; padding: 16px; border-radius: 8px; font-weight: bold; }
-    .spam { background: #fdecea; color: #b3261e; }
-    .ham { background: #e6f4ea; color: #1e7b34; }
-  </style>
-</head>
-<body>
-  <h1>Spam Classifier</h1>
-  <form method="post">
-    <textarea name="message" placeholder="Paste a message to classify...">{{ message or "" }}</textarea><br>
-    <button type="submit">Check</button>
-  </form>
-  {% if label is not none %}
-    <div class="result {{ 'spam' if label == 1 else 'ham' }}">
-      Prediction: {{ "SPAM" if label == 1 else "NOT SPAM" }}
-      {% if proba is not none %}
-        <br><span style="font-weight: normal;">Confidence: {{ "%.1f"|format(proba * 100) }}%</span>
-      {% endif %}
-    </div>
-  {% endif %}
-</body>
-</html>
-"""
 
 
-def predict_message(message):
+@st.cache_resource
+def load_pipeline():
+    return joblib.load(MODEL_PATH)
+
+
+def predict_message(pipeline, message):
     label = int(pipeline.predict([message])[0])
     proba = None
     if hasattr(pipeline, "predict_proba"):
@@ -85,38 +52,20 @@ def predict_message(message):
     return label, proba
 
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    message, label, proba = None, None, None
-    if request.method == "POST":
-        message = request.form.get("message", "")
-        if message.strip():
-            label, proba = predict_message(message)
-    return render_template_string(PAGE, message=message, label=label, proba=proba)
+st.set_page_config(page_title="Spam Classifier", page_icon="📧")
+st.title("📧 Spam Classifier")
+st.write("Paste a message below and check whether it's spam.")
 
+pipeline = load_pipeline()
 
-@app.route("/predict", methods=["POST"])
-def predict():
-    """
-    JSON API endpoint.
-    Request:  {"message": "some text"}
-    Response: {"message": "...", "label": 0 or 1, "prediction": "spam"/"not spam", "confidence": 0.0-1.0}
-    """
-    data = request.get_json(silent=True) or {}
-    message = data.get("message", "")
+message = st.text_area("Message", height=150, placeholder="Type or paste a message here...")
+
+if st.button("Check", type="primary"):
     if not message.strip():
-        return jsonify({"error": "Field 'message' is required and cannot be empty."}), 400
-
-    label, proba = predict_message(message)
-    return jsonify(
-        {
-            "message": message,
-            "label": label,
-            "prediction": "spam" if label == 1 else "not spam",
-            "confidence": proba,
-        }
-    )
-
-
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+        st.warning("Please enter a message first.")
+    else:
+        label, proba = predict_message(pipeline, message)
+        if label == 1:
+            st.error(f"🚨 **SPAM**" + (f" — {proba * 100:.1f}% confidence" if proba is not None else ""))
+        else:
+            st.success(f"✅ **NOT SPAM**" + (f" — {proba * 100:.1f}% confidence" if proba is not None else ""))
